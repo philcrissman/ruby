@@ -4739,7 +4739,13 @@ iseq_optimize(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
                 }
             }
         }
-        if (IS_LABEL(list)) {
+        if (IS_LABEL(list) &&
+            /* A block body's own start/end labels only bracket the
+             * redo/next catch entries; they are not a rescue region, so
+             * they must not disable tail calls for the whole body. */
+            !(ISEQ_BODY(iseq)->type == ISEQ_TYPE_BLOCK &&
+              ((LABEL *)list == ISEQ_COMPILE_DATA(iseq)->start_label ||
+               (LABEL *)list == ISEQ_COMPILE_DATA(iseq)->end_label))) {
             switch (((LABEL *)list)->rescued) {
               case LABEL_RESCUE_BEG:
                 rescue_level++;

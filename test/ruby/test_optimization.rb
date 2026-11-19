@@ -791,6 +791,42 @@ class TestRubyOptimization < Test::Unit::TestCase
     end
   end
 
+  def test_tailcall_lambda_not_to_grow_stack
+    tailcall("#{<<-"begin;"}\n#{<<~"end;"}")
+    begin;
+      def lambda_countdown
+        f = ->(n) { n < 1 ? :ok : f.(n - 1) }
+      end
+      def lambda_even_odd
+        even = odd = nil
+        even = ->(n) { n.zero? ? true : odd.call(n - 1) }
+        odd  = ->(n) { n.zero? ? false : even[n - 1] }
+        even
+      end
+      def lambda_early_return
+        f = ->(n) { return :early if n == 5; f.(n + 1) }
+      end
+    end;
+    assert_nothing_raised(SystemStackError) do
+      assert_equal(:ok, lambda_countdown.(1_000_000))
+      assert_equal(true, lambda_even_odd.(1_000_000))
+    end
+    assert_equal(:early, lambda_early_return.(0))
+  end
+
+  def test_tailcall_proc_not_optimized
+    # A plain proc's return targets its home method, so its caller's
+    # frame must not be replaced.
+    tailcall("#{<<-"begin;"}\n#{<<~"end;"}")
+    begin;
+      def proc_return_from_home
+        pr = proc { return 42 }
+        pr.call
+      end
+    end;
+    assert_equal(42, proc_return_from_home)
+  end
+
   class Bug10557
     def [](_, &)
       block_given?
