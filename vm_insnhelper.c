@@ -5614,6 +5614,40 @@ vm_invoke_iseq_block_with_cref(rb_execution_context_t *ec, rb_control_frame_t *r
     int opt_pc = vm_callee_setup_block_arg(ec, calling, ci, iseq, argv, is_lambda ? arg_setup_method : arg_setup_block);
     int frame_flag = VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0);
 
+    /* Experimental: proper tail calls into lambdas (tailcall_optimization).
+     * Replace the caller's frame instead of stacking a new one, like
+     * vm_call_iseq_setup_tailcall does for methods.  Restricted to lambdas
+     * (a plain proc's break/return may target the frame we would pop) and to
+     * lambdas whose environment already lives on the heap. */
+    if (UNLIKELY(vm_ci_flag(ci) & VM_CALL_TAILCALL) &&
+        is_lambda && cref == NULL &&
+        reg_cfp == ec->cfp &&
+        VM_ENV_ESCAPED_P(captured->ep)) {
+        VALUE finish_flag = VM_FRAME_FINISHED_P(reg_cfp) ? VM_FRAME_FLAG_FINISH : 0;
+        VALUE *src_argv = argv;
+        VALUE *sp_orig, *sp;
+        rb_control_frame_t *cfp;
+
+        vm_pop_frame(ec, reg_cfp, reg_cfp->ep);
+        cfp = ec->cfp;
+        sp_orig = sp = cfp->sp;
+
+        /* args may overlap with their new home; move them down */
+        MEMMOVE(sp, src_argv, VALUE, arg_size);
+        sp += arg_size;
+
+        vm_push_frame(ec, iseq,
+                      frame_flag | finish_flag,
+                      captured->self,
+                      VM_GUARDED_PREV_EP(captured->ep), 0,
+                      ISEQ_BODY(iseq)->iseq_encoded + opt_pc,
+                      sp,
+                      ISEQ_BODY(iseq)->local_table_size - arg_size, ISEQ_BODY(iseq)->stack_max);
+
+        cfp->sp = sp_orig;
+        return Qundef;
+    }
+
     SET_SP(rsp);
 
     /* cref is normally 0; Proc#refined supplies a refinement cref */
